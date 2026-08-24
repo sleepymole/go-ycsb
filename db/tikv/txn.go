@@ -103,7 +103,7 @@ func (db *txnDB) Read(ctx context.Context, table string, key string, fields []st
 	row, err := tx.Get(ctx, db.getRowKey(table, key))
 	if tikverr.IsErrNotFound(err) {
 		return nil, nil
-	} else if row == nil {
+	} else if err != nil {
 		return nil, err
 	}
 
@@ -111,7 +111,7 @@ func (db *txnDB) Read(ctx context.Context, table string, key string, fields []st
 		return nil, err
 	}
 
-	return db.r.Decode(row, fields)
+	return db.r.Decode(row.Value, fields)
 }
 
 func (db *txnDB) BatchRead(ctx context.Context, table string, keys []string, fields []string) ([]map[string][]byte, error) {
@@ -124,13 +124,16 @@ func (db *txnDB) BatchRead(ctx context.Context, table string, keys []string, fie
 	rowValues := make([]map[string][]byte, len(keys))
 	for i, key := range keys {
 		value, err := tx.Get(ctx, db.getRowKey(table, key))
-		if tikverr.IsErrNotFound(err) || value == nil {
+		if tikverr.IsErrNotFound(err) {
 			rowValues[i] = nil
-		} else {
-			rowValues[i], err = db.r.Decode(value, fields)
-			if err != nil {
-				return nil, err
-			}
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		rowValues[i], err = db.r.Decode(value.Value, fields)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -192,11 +195,11 @@ func (db *txnDB) Update(ctx context.Context, table string, key string, values ma
 	row, err := tx.Get(ctx, rowKey)
 	if tikverr.IsErrNotFound(err) {
 		return nil
-	} else if row == nil {
+	} else if err != nil {
 		return err
 	}
 
-	data, err := db.r.Decode(row, nil)
+	data, err := db.r.Decode(row.Value, nil)
 	if err != nil {
 		return err
 	}
