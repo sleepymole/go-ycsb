@@ -32,13 +32,28 @@ type measurement struct {
 
 	p *properties.Properties
 
-	measurer ycsb.Measurer
+	measurer   ycsb.Measurer
+	prometheus *prometheusMetrics
+}
+
+// intervalSummarizer is implemented by measurers that can report and reset
+// the measurements collected since the previous periodic summary. Measurers
+// that do not implement it retain the historical cumulative Summary behavior.
+type intervalSummarizer interface {
+	IntervalSummary()
 }
 
 func (m *measurement) measure(op string, start time.Time, lan time.Duration) {
 	m.Lock()
 	m.measurer.Measure(op, start, lan)
 	m.Unlock()
+
+	// Prometheus collectors are concurrency-safe. Keep their work outside the
+	// measurer lock so enabling metrics does not extend the global critical
+	// section shared by all benchmark workers.
+	if m.prometheus != nil {
+		m.prometheus.observe(op, lan)
+	}
 }
 
 func (m *measurement) output() {
@@ -70,15 +85,26 @@ func (m *measurement) output() {
 }
 
 func (m *measurement) summary() {
-	m.RLock()
-	globalMeasure.measurer.Summary()
-	m.RUnlock()
+	m.Lock()
+	defer m.Unlock()
+	if interval, ok := m.measurer.(intervalSummarizer); ok {
+		interval.IntervalSummary()
+		return
+	}
+	m.measurer.Summary()
 }
 
 // InitMeasure initializes the global measurement.
 func InitMeasure(p *properties.Properties) {
 	globalMeasure = new(measurement)
 	globalMeasure.p = p
+	if p.GetString(prop.MetricsAddr, prop.MetricsAddrDefault) != "" {
+		globalMeasure.prometheus = initPrometheusMetrics()
+	} else {
+		prometheusMu.Lock()
+		prometheusRegistry = nil
+		prometheusMu.Unlock()
+	}
 	measurementType := p.GetString(prop.MeasurementType, prop.MeasurementTypeDefault)
 	switch measurementType {
 	case "histogram":

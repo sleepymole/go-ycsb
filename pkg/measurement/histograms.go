@@ -14,7 +14,8 @@ import (
 )
 
 type histograms struct {
-	p *properties.Properties
+	p                 *properties.Properties
+	intervalStartTime time.Time
 
 	histograms map[string]*histogram
 }
@@ -42,9 +43,12 @@ func (h *histograms) GenerateExtendedOutputs() {
 }
 
 func (h *histograms) Measure(op string, start time.Time, lan time.Duration) {
+	if h.intervalStartTime.IsZero() {
+		h.intervalStartTime = time.Now()
+	}
 	opM, ok := h.histograms[op]
 	if !ok {
-		opM = newHistogram()
+		opM = newHistogramAt(h.intervalStartTime)
 		h.histograms[op] = opM
 	}
 
@@ -59,12 +63,30 @@ func (h *histograms) summary() map[string][]string {
 	return summaries
 }
 
+func (h *histograms) intervalSummaryAt(endTime time.Time) map[string][]string {
+	summaries := make(map[string][]string, len(h.histograms))
+	for op, opM := range h.histograms {
+		summaries[op] = opM.intervalSummaryAt(endTime)
+	}
+	h.intervalStartTime = endTime
+	return summaries
+}
+
 func (h *histograms) Summary() {
 	h.Output(os.Stdout)
 }
 
+// IntervalSummary prints and resets the measurements collected since the
+// previous periodic summary. Output still reports the cumulative benchmark.
+func (h *histograms) IntervalSummary() {
+	h.output(os.Stdout, h.intervalSummaryAt(time.Now()))
+}
+
 func (h *histograms) Output(w io.Writer) error {
-	summaries := h.summary()
+	return h.output(w, h.summary())
+}
+
+func (h *histograms) output(w io.Writer, summaries map[string][]string) error {
 	keys := make([]string, 0, len(summaries))
 	for k := range summaries {
 		keys = append(keys, k)

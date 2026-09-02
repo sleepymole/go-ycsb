@@ -438,10 +438,14 @@ func (c *core) doTransactionRead(ctx context.Context, db ycsb.DB, state *coreSta
 	return nil
 }
 
-func (c *core) doTransactionReadModifyWrite(ctx context.Context, db ycsb.DB, state *coreState) error {
+func (c *core) doTransactionReadModifyWrite(ctx context.Context, db ycsb.DB, state *coreState) (err error) {
 	start := time.Now()
 	defer func() {
-		measurement.Measure("READ_MODIFY_WRITE", start, time.Now().Sub(start))
+		op := "READ_MODIFY_WRITE"
+		if err != nil {
+			op += "_ERROR"
+		}
+		measurement.Measure(op, start, time.Since(start))
 	}()
 
 	r := state.r
@@ -469,7 +473,7 @@ func (c *core) doTransactionReadModifyWrite(ctx context.Context, db ycsb.DB, sta
 		return err
 	}
 
-	if err := db.Update(ctx, c.table, keyName, values); err != nil {
+	if err = db.Update(ctx, c.table, keyName, values); err != nil {
 		return err
 	}
 

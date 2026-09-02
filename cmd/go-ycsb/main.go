@@ -92,9 +92,12 @@ var (
 	globalDB       ycsb.DB
 	globalWorkload ycsb.Workload
 	globalProps    *properties.Properties
+	stopMetrics    func()
 )
 
 func initialGlobal(dbName string, onProperties func()) {
+	var err error
+
 	globalProps = properties.NewProperties()
 	if len(propertyFiles) > 0 {
 		globalProps = properties.MustLoadFiles(propertyFiles, properties.UTF8, false)
@@ -118,12 +121,16 @@ func initialGlobal(dbName string, onProperties func()) {
 	}()
 
 	measurement.InitMeasure(globalProps)
+	stopMetrics, err = measurement.StartMetricsServer(
+		globalProps.GetString(prop.MetricsAddr, prop.MetricsAddrDefault),
+	)
+	if err != nil {
+		util.Fatalf("failed to start metrics server: %v", err)
+	}
 
 	if len(tableName) == 0 {
 		tableName = globalProps.GetString(prop.TableName, prop.TableNameDefault)
 	}
-	var err error
-
 	if _, _, err = globalProps.Set(prop.TableName, tableName); err != nil {
 		panic(err)
 	}
@@ -183,11 +190,12 @@ func main() {
 		newShellCommand(),
 		newLoadCommand(),
 		newRunCommand(),
+		newRawKVCommand(),
 	)
 
 	cobra.EnablePrefixMatching = true
 
-	if err := rootCmd.Execute(); err != nil {
+	if err := rootCmd.ExecuteContext(globalContext); err != nil {
 		fmt.Println(rootCmd.UsageString())
 	}
 
@@ -198,6 +206,10 @@ func main() {
 
 	if globalWorkload != nil {
 		globalWorkload.Close()
+	}
+
+	if stopMetrics != nil {
+		stopMetrics()
 	}
 
 	closeDone <- struct{}{}

@@ -82,6 +82,27 @@ Available Commands:
 ./bin/go-ycsb run basic -P workloads/workloada
 ```
 
+### RawKV commands
+
+`rawkv` operates on TiKV RawKV keys directly, without YCSB table or row
+encoding. The key ranges used by `scan`, `delete_range`, and `checksum` are
+half-open: `[start-key, end-key)`. Omitting `end-key` for `scan` or `checksum`
+means that the range is unbounded.
+
+```bash
+./bin/go-ycsb rawkv --pd 127.0.0.1:2379 put key1 value1
+./bin/go-ycsb rawkv --pd 127.0.0.1:2379 get key1
+./bin/go-ycsb rawkv --pd 127.0.0.1:2379 scan key1 key9 --limit 100
+./bin/go-ycsb rawkv --pd 127.0.0.1:2379 scan key1 key9 --keys-only
+./bin/go-ycsb rawkv --pd 127.0.0.1:2379 delete key1
+./bin/go-ycsb rawkv --pd 127.0.0.1:2379 delete_range key1 key9
+./bin/go-ycsb rawkv --pd 127.0.0.1:2379 checksum key1 key9 --concurrency 4
+```
+
+`checksum` obtains the Region boundaries from PD in pages of 1024, creates one
+checksum task for each Region intersecting the requested range, and runs those
+tasks concurrently. It reports `crc64_xor`, `total_kvs`, and `total_bytes`.
+
 ## Supported Database
 
 - MySQL / TiDB
@@ -108,6 +129,17 @@ Available Commands:
 |-|-|-|
 |measurementtype|"histogram"|The mechanism for recording measurements, one of `histogram`, `raw` or `csv`|
 |measurement.output_file|""|File to write output to, default writes to stdout|
+|metrics.addr|""|Address for the Prometheus metrics endpoint, empty to disable|
+
+When `metrics.addr` is set, go-ycsb exposes the process measurements at
+`/metrics`. The endpoint contains `go_ycsb_operations_total` and
+`go_ycsb_operation_duration_millis`, labeled by operation and result (`ok` or
+`error`). Each go-ycsb process must use a different address when running more
+than one process.
+
+The periodic summary printed by `measurement.interval` (or `--interval`) is
+for the elapsed window since the previous summary. The final report printed
+after the benchmark remains cumulative for the whole run.
 
 ## Database Configuration
 

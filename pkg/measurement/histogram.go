@@ -22,9 +22,11 @@ import (
 )
 
 type histogram struct {
-	boundCounts util.ConcurrentMap
-	startTime   time.Time
-	hist        *hdrhistogram.Histogram
+	boundCounts       util.ConcurrentMap
+	startTime         time.Time
+	hist              *hdrhistogram.Histogram
+	intervalStartTime time.Time
+	intervalHist      *hdrhistogram.Histogram
 }
 
 // Metric name.
@@ -44,18 +46,49 @@ const (
 )
 
 func newHistogram() *histogram {
+	return newHistogramAt(time.Now())
+}
+
+func newHistogramAt(intervalStartTime time.Time) *histogram {
 	h := new(histogram)
 	h.startTime = time.Now()
-	h.hist = hdrhistogram.New(1, 24*60*60*1000*1000, 3)
+	h.hist = newHdrHistogram()
+	h.intervalStartTime = intervalStartTime
+	h.intervalHist = newHdrHistogram()
 	return h
 }
 
+func newHdrHistogram() *hdrhistogram.Histogram {
+	return hdrhistogram.New(1, 24*60*60*1000*1000, 3)
+}
+
 func (h *histogram) Measure(latency time.Duration) {
-	h.hist.RecordValue(latency.Microseconds())
+	value := latency.Microseconds()
+	h.hist.RecordValue(value)
+	h.intervalHist.RecordValue(value)
 }
 
 func (h *histogram) Summary() []string {
-	res := h.getInfo()
+	res := h.getInfo(h.hist, h.startTime, time.Now())
+
+	return formatSummary(res)
+}
+
+// IntervalSummary returns measurements since the previous interval summary,
+// then starts a new interval. The cumulative Summary remains unchanged.
+func (h *histogram) IntervalSummary() []string {
+	return h.intervalSummaryAt(time.Now())
+}
+
+func (h *histogram) intervalSummaryAt(endTime time.Time) []string {
+	res := h.getInfo(h.intervalHist, h.intervalStartTime, endTime)
+	h.intervalHist.Reset()
+	h.intervalStartTime = endTime
+
+	return formatSummary(res)
+}
+
+func formatSummary(res map[string]interface{}) []string {
 
 	return []string{
 		util.FloatToOneString(res[ELAPSED]),
@@ -73,24 +106,27 @@ func (h *histogram) Summary() []string {
 	}
 }
 
-func (h *histogram) getInfo() map[string]interface{} {
-	min := h.hist.Min()
-	max := h.hist.Max()
-	avg := int64(h.hist.Mean())
-	count := h.hist.TotalCount()
+func (h *histogram) getInfo(hist *hdrhistogram.Histogram, startTime, endTime time.Time) map[string]interface{} {
+	min := hist.Min()
+	max := hist.Max()
+	avg := int64(hist.Mean())
+	count := hist.TotalCount()
 
 	bounds := h.boundCounts.Keys()
 	sort.Ints(bounds)
 
-	per50 := h.hist.ValueAtPercentile(50)
-	per90 := h.hist.ValueAtPercentile(90)
-	per95 := h.hist.ValueAtPercentile(95)
-	per99 := h.hist.ValueAtPercentile(99)
-	per999 := h.hist.ValueAtPercentile(99.9)
-	per9999 := h.hist.ValueAtPercentile(99.99)
+	per50 := hist.ValueAtPercentile(50)
+	per90 := hist.ValueAtPercentile(90)
+	per95 := hist.ValueAtPercentile(95)
+	per99 := hist.ValueAtPercentile(99)
+	per999 := hist.ValueAtPercentile(99.9)
+	per9999 := hist.ValueAtPercentile(99.99)
 
-	elapsed := time.Now().Sub(h.startTime).Seconds()
-	qps := float64(count) / elapsed
+	elapsed := endTime.Sub(startTime).Seconds()
+	qps := float64(0)
+	if elapsed > 0 {
+		qps = float64(count) / elapsed
+	}
 	res := make(map[string]interface{})
 	res[ELAPSED] = elapsed
 	res[COUNT] = count
