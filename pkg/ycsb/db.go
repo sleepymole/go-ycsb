@@ -70,6 +70,21 @@ type DB interface {
 	Delete(ctx context.Context, table string, key string) error
 }
 
+// ReadModifyWriteDB is an optional database capability for read-modify-write
+// operations. Implementations can use the values returned by the read phase
+// instead of reading the same record again while applying the update.
+//
+// ReadForUpdate returns decoded fields and an opaque value representing the
+// exact database value read. UpdateWithRead receives both so implementations
+// can provide compare-and-swap semantics without reading the row again. The
+// caller must not modify either result before UpdateWithRead. Ownership of the
+// decoded map transfers to UpdateWithRead, which may reuse it to construct the
+// updated value; the opaque value must remain unchanged for comparison.
+type ReadModifyWriteDB interface {
+	ReadForUpdate(ctx context.Context, table string, key string, fields []string) (map[string][]byte, []byte, error)
+	UpdateWithRead(ctx context.Context, table string, key string, readValues map[string][]byte, readValue []byte, values map[string][]byte) error
+}
+
 type BatchDB interface {
 	// BatchInsert inserts batch records in the database.
 	// table: The name of the table.

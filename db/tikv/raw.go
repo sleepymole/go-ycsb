@@ -27,10 +27,21 @@ import (
 )
 
 type rawDB struct {
-	db      *rawkv.Client
-	r       *util.RowCodec
-	bufPool *util.BufPool
+	db           *rawkv.Client
+	r            *util.RowCodec
+	bufPool      *util.BufPool
+	atomicForCAS bool
 }
+
+type rawCASClient interface {
+	CompareAndSwap(context.Context, []byte, []byte, []byte, ...rawkv.RawOption) ([]byte, bool, error)
+}
+
+// ErrCASConflict indicates that the value read before the update no longer
+// matches the value stored in RawKV.
+var ErrCASConflict = errors.New("rawkv compare-and-swap conflict")
+
+var _ ycsb.ReadModifyWriteDB = (*rawDB)(nil)
 
 func createRawDB(p *properties.Properties) (ycsb.DB, error) {
 	pdAddr := p.GetString(tikvPD, "127.0.0.1:2379")
@@ -44,13 +55,16 @@ func createRawDB(p *properties.Properties) (ycsb.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	atomicForCAS := p.GetBool(tikvCAS, false)
+	db.SetAtomicForCAS(atomicForCAS)
 
 	bufPool := util.NewBufPool()
 
 	return &rawDB{
-		db:      db,
-		r:       util.NewRowCodec(p),
-		bufPool: bufPool,
+		db:           db,
+		r:            util.NewRowCodec(p),
+		bufPool:      bufPool,
+		atomicForCAS: atomicForCAS,
 	}, nil
 }
 
@@ -70,14 +84,35 @@ func (db *rawDB) getRowKey(table string, key string) []byte {
 }
 
 func (db *rawDB) Read(ctx context.Context, table string, key string, fields []string) (map[string][]byte, error) {
+	values, _, err := db.read(ctx, table, key, fields, false)
+	return values, err
+}
+
+func (db *rawDB) ReadForUpdate(ctx context.Context, table string, key string, _ []string) (map[string][]byte, []byte, error) {
+	// RawKV stores the complete row as one value. Decode all fields so the
+	// subsequent merge can write the whole row without dropping unselected
+	// fields, regardless of the workload's readallfields setting.
+	return db.read(ctx, table, key, nil, true)
+}
+
+func (db *rawDB) read(ctx context.Context, table string, key string, fields []string, keepRaw bool) (map[string][]byte, []byte, error) {
 	row, err := db.db.Get(ctx, db.getRowKey(table, key))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	} else if row == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	return db.r.Decode(row, fields)
+	values, err := db.r.Decode(row, fields)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !keepRaw {
+		return values, nil, nil
+	}
+	// Return the exact bytes for CAS. Decode only creates slices into row, so
+	// both results remain valid without copying the RawKV response.
+	return values, row, nil
 }
 
 func (db *rawDB) BatchRead(ctx context.Context, table string, keys []string, fields []string) ([]map[string][]byte, error) {
@@ -141,6 +176,50 @@ func (db *rawDB) Update(ctx context.Context, table string, key string, values ma
 
 	// Update data and use Insert to overwrite.
 	return db.Insert(ctx, table, key, data)
+}
+
+// UpdateWithRead merges values into the row returned by the preceding read
+// and writes the merged row directly. When CAS is enabled, readValue is sent
+// as the compare value so a concurrent update cannot be overwritten silently.
+func (db *rawDB) UpdateWithRead(ctx context.Context, table string, key string, readValues map[string][]byte, readValue []byte, values map[string][]byte) error {
+	data := mergeRawKVValues(readValues, values)
+
+	buf := db.bufPool.Get()
+	defer func() {
+		db.bufPool.Put(buf)
+	}()
+	buf, err := db.r.Encode(buf, data)
+	if err != nil {
+		return err
+	}
+
+	rawKey := db.getRowKey(table, key)
+	if !db.atomicForCAS {
+		return db.db.Put(ctx, rawKey, buf)
+	}
+
+	return compareAndSwap(ctx, db.db, rawKey, readValue, buf, key)
+}
+
+func compareAndSwap(ctx context.Context, client rawCASClient, rawKey, readValue, newValue []byte, key string) error {
+	_, swapped, err := client.CompareAndSwap(ctx, rawKey, readValue, newValue)
+	if err != nil {
+		return err
+	}
+	if !swapped {
+		return errors.Annotatef(ErrCASConflict, "key %s", key)
+	}
+	return nil
+}
+
+func mergeRawKVValues(readValues, values map[string][]byte) map[string][]byte {
+	if readValues == nil {
+		return values
+	}
+	for field, value := range values {
+		readValues[field] = value
+	}
+	return readValues
 }
 
 func (db *rawDB) BatchUpdate(ctx context.Context, table string, keys []string, values []map[string][]byte) error {

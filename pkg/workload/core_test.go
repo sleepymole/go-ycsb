@@ -57,6 +57,11 @@ func Test_core_buildKeyName(t *testing.T) {
 type readModifyWriteDB struct {
 	readErr      error
 	updateErr    error
+	readValues   map[string][]byte
+	readValue    []byte
+	readCount    int
+	readFields   []string
+	updateValues map[string][]byte
 	updateCalled bool
 }
 
@@ -65,14 +70,17 @@ func (*readModifyWriteDB) InitThread(ctx context.Context, _, _ int) context.Cont
 	return ctx
 }
 func (*readModifyWriteDB) CleanupThread(context.Context) {}
-func (db *readModifyWriteDB) Read(context.Context, string, string, []string) (map[string][]byte, error) {
-	return nil, db.readErr
+func (db *readModifyWriteDB) Read(_ context.Context, _ string, _ string, fields []string) (map[string][]byte, error) {
+	db.readCount++
+	db.readFields = append([]string(nil), fields...)
+	return db.readValues, db.readErr
 }
 func (*readModifyWriteDB) Scan(context.Context, string, string, int, []string) ([]map[string][]byte, error) {
 	return nil, nil
 }
-func (db *readModifyWriteDB) Update(context.Context, string, string, map[string][]byte) error {
+func (db *readModifyWriteDB) Update(_ context.Context, _ string, _ string, values map[string][]byte) error {
 	db.updateCalled = true
+	db.updateValues = values
 	return db.updateErr
 }
 func (*readModifyWriteDB) Insert(context.Context, string, string, map[string][]byte) error {
@@ -81,6 +89,28 @@ func (*readModifyWriteDB) Insert(context.Context, string, string, map[string][]b
 func (*readModifyWriteDB) Delete(context.Context, string, string) error { return nil }
 
 var _ ycsb.DB = (*readModifyWriteDB)(nil)
+
+type readModifyWriteCapableDB struct {
+	*readModifyWriteDB
+	updateWithReadCalled bool
+	readValuesReceived   map[string][]byte
+	valuesReceived       map[string][]byte
+}
+
+func (db *readModifyWriteCapableDB) ReadForUpdate(ctx context.Context, table, key string, fields []string) (map[string][]byte, []byte, error) {
+	values, err := db.Read(ctx, table, key, fields)
+	return values, []byte("raw-old"), err
+}
+
+func (db *readModifyWriteCapableDB) UpdateWithRead(_ context.Context, _ string, _ string, readValues map[string][]byte, readValue []byte, values map[string][]byte) error {
+	db.updateWithReadCalled = true
+	db.readValuesReceived = readValues
+	db.readValue = readValue
+	db.valuesReceived = values
+	return db.updateErr
+}
+
+var _ ycsb.ReadModifyWriteDB = (*readModifyWriteCapableDB)(nil)
 
 func TestReadModifyWriteMetricsResult(t *testing.T) {
 	readErr := errors.New("read failed")
@@ -126,5 +156,48 @@ func TestReadModifyWriteMetricsResult(t *testing.T) {
 				t.Fatalf("metrics output does not contain %q:\n%s", metric, resp.Body.String())
 			}
 		})
+	}
+}
+
+func TestReadModifyWriteReusesReadValues(t *testing.T) {
+	p := properties.NewProperties()
+	p.Set(prop.RecordCount, "1")
+	p.Set(prop.FieldCount, "2")
+	p.Set(prop.ReadAllFields, "false")
+	p.Set(prop.MetricsAddr, "127.0.0.1:0")
+	workload, err := (coreCreator{}).Create(p)
+	if err != nil {
+		t.Fatalf("create workload: %v", err)
+	}
+	c := workload.(*core)
+	ctx := c.InitThread(context.Background(), 0, 1)
+	measurement.InitMeasure(p)
+
+	readValues := map[string][]byte{
+		"field0": []byte("old-0"),
+		"field1": []byte("old-1"),
+	}
+	db := &readModifyWriteCapableDB{readModifyWriteDB: &readModifyWriteDB{readValues: readValues}}
+	if err := c.doTransactionReadModifyWrite(ctx, db, ctx.Value(stateKey).(*coreState)); err != nil {
+		t.Fatalf("read-modify-write: %v", err)
+	}
+
+	if db.readCount != 1 {
+		t.Fatalf("read count = %d, want 1", db.readCount)
+	}
+	if len(db.readFields) != 1 {
+		t.Fatalf("read fields = %v, want workload field selection", db.readFields)
+	}
+	if !db.updateWithReadCalled {
+		t.Fatal("UpdateWithRead was not called")
+	}
+	if db.updateCalled {
+		t.Fatal("fallback Update should not be called")
+	}
+	if db.readValuesReceived["field0"][0] != 'o' || db.readValuesReceived["field1"][0] != 'o' {
+		t.Fatalf("read values were not passed through: %#v", db.readValuesReceived)
+	}
+	if string(db.readValue) != "raw-old" {
+		t.Fatalf("read value was not passed through: %q", db.readValue)
 	}
 }

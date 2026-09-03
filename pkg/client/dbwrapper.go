@@ -27,6 +27,8 @@ type DbWrapper struct {
 	DB ycsb.DB
 }
 
+var _ ycsb.ReadModifyWriteDB = DbWrapper{}
+
 func measure(start time.Time, op string, err error) {
 	lan := time.Since(start)
 	if err != nil {
@@ -57,6 +59,22 @@ func (db DbWrapper) Read(ctx context.Context, table string, key string, fields [
 	}()
 
 	return db.DB.Read(ctx, table, key, fields)
+}
+
+// ReadForUpdate forwards the optional read-modify-write capability while
+// keeping the normal READ measurement. Databases without the capability still
+// use Read and return a nil opaque value.
+func (db DbWrapper) ReadForUpdate(ctx context.Context, table string, key string, fields []string) (_ map[string][]byte, _ []byte, err error) {
+	start := time.Now()
+	defer func() {
+		measure(start, "READ", err)
+	}()
+
+	if rmwDB, ok := db.DB.(ycsb.ReadModifyWriteDB); ok {
+		return rmwDB.ReadForUpdate(ctx, table, key, fields)
+	}
+	values, err := db.DB.Read(ctx, table, key, fields)
+	return values, nil, err
 }
 
 func (db DbWrapper) BatchRead(ctx context.Context, table string, keys []string, fields []string) (_ []map[string][]byte, err error) {
@@ -92,6 +110,21 @@ func (db DbWrapper) Update(ctx context.Context, table string, key string, values
 		measure(start, "UPDATE", err)
 	}()
 
+	return db.DB.Update(ctx, table, key, values)
+}
+
+// UpdateWithRead implements the optional read-modify-write capability. It
+// preserves the existing UPDATE measurement while allowing databases that can
+// merge an already-read row to avoid an extra read.
+func (db DbWrapper) UpdateWithRead(ctx context.Context, table string, key string, readValues map[string][]byte, readValue []byte, values map[string][]byte) (err error) {
+	start := time.Now()
+	defer func() {
+		measure(start, "UPDATE", err)
+	}()
+
+	if rmwDB, ok := db.DB.(ycsb.ReadModifyWriteDB); ok {
+		return rmwDB.UpdateWithRead(ctx, table, key, readValues, readValue, values)
+	}
 	return db.DB.Update(ctx, table, key, values)
 }
 

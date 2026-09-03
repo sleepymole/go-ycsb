@@ -174,9 +174,16 @@ Common configurations:
 |tikv.type|"raw"|TiKV mode, "raw", "txn", or "coprocessor"|
 |tikv.conncount|128|gRPC connection count|
 |tikv.batchsize|128|Request batch size|
+|tikv.cas|false|Enable RawKV atomic (CAS) mode for writes|
 |tikv.async_commit|true|Enalbe async commit or not|
 |tikv.one_pc|true|Enable one phase or not|
 |tikv.apiversion|"V1"|[api-version](https://docs.pingcap.com/tidb/stable/tikv-configuration-file#api-version-new-in-v610) of tikv server, "V1" or "V2"|
+
+`tikv.cas=true` enables RawKV atomic mode and makes read-modify-write use
+`CompareAndSwap` with the exact value returned by its read phase. A CAS
+conflict is returned as an error without retrying. All writers for the same
+data should use the same mode; mixing atomic and normal RawKV writes can
+violate linearizability.
 
 ### FoundationDB
 

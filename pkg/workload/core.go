@@ -448,10 +448,10 @@ func (c *core) doTransactionReadModifyWrite(ctx context.Context, db ycsb.DB, sta
 		measurement.Measure(op, start, time.Since(start))
 	}()
 
-	r := state.r
 	keyNum := c.nextKeyNum(state)
 	keyName := c.buildKeyName(keyNum)
 
+	r := state.r
 	var fields []string
 	if !c.readAllFields {
 		fieldName := state.fieldNames[c.fieldChooser.Next(r)]
@@ -468,17 +468,30 @@ func (c *core) doTransactionReadModifyWrite(ctx context.Context, db ycsb.DB, sta
 	}
 	defer c.putValues(values)
 
-	readValues, err := db.Read(ctx, c.table, keyName, fields)
+	var readValues map[string][]byte
+	var readValue []byte
+	rmwDB, canReuseRead := db.(ycsb.ReadModifyWriteDB)
+	if canReuseRead {
+		readValues, readValue, err = rmwDB.ReadForUpdate(ctx, c.table, keyName, fields)
+	} else {
+		readValues, err = db.Read(ctx, c.table, keyName, fields)
+	}
 	if err != nil {
 		return err
 	}
-
-	if err = db.Update(ctx, c.table, keyName, values); err != nil {
-		return err
+	if c.dataIntegrity {
+		// Validate the read result before handing it to UpdateWithRead, whose
+		// implementation may reuse the map while constructing the new value.
+		c.verifyRow(state, keyName, readValues)
 	}
 
-	if c.dataIntegrity {
-		c.verifyRow(state, keyName, readValues)
+	if canReuseRead {
+		err = rmwDB.UpdateWithRead(ctx, c.table, keyName, readValues, readValue, values)
+	} else {
+		err = db.Update(ctx, c.table, keyName, values)
+	}
+	if err != nil {
+		return err
 	}
 
 	return nil
