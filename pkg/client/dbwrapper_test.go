@@ -7,10 +7,13 @@ package client
 
 import (
 	"context"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/magiconair/properties"
 	"github.com/pingcap/go-ycsb/pkg/measurement"
+	"github.com/pingcap/go-ycsb/pkg/prop"
 	"github.com/pingcap/go-ycsb/pkg/ycsb"
 )
 
@@ -37,7 +40,9 @@ func (db *wrapperReadModifyWriteDB) UpdateWithRead(_ context.Context, _ string, 
 var _ ycsb.ReadModifyWriteDB = (*wrapperReadModifyWriteDB)(nil)
 
 func TestDbWrapperReadForUpdate(t *testing.T) {
-	measurement.InitMeasure(properties.NewProperties())
+	p := properties.NewProperties()
+	p.Set(prop.MetricsAddr, "127.0.0.1:0")
+	measurement.InitMeasure(p)
 	db := &wrapperReadModifyWriteDB{
 		readValues: map[string][]byte{"field0": []byte("old")},
 		readValue:  []byte("encoded-old"),
@@ -49,6 +54,18 @@ func TestDbWrapperReadForUpdate(t *testing.T) {
 	}
 	if string(values["field0"]) != "old" || string(readValue) != "encoded-old" {
 		t.Fatalf("ReadForUpdate = %#v, %q", values, readValue)
+	}
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	resp := httptest.NewRecorder()
+	measurement.MetricsHandler().ServeHTTP(resp, req)
+	for _, metric := range []string{
+		`go_ycsb_operations_total{operation="READ",result="ok",table="usertable"} 1`,
+		`go_ycsb_operations_total{operation="TOTAL",result="ok",table="usertable"} 1`,
+	} {
+		if !strings.Contains(resp.Body.String(), metric) {
+			t.Errorf("metrics output does not contain %q:\n%s", metric, resp.Body.String())
+		}
 	}
 }
 

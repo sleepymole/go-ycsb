@@ -47,7 +47,7 @@ func initPrometheusMetrics() *prometheusMetrics {
 				Name:      "operations_total",
 				Help:      "Total number of YCSB operations.",
 			},
-			[]string{"operation", "result"},
+			[]string{"table", "operation", "result"},
 		),
 		duration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -56,7 +56,7 @@ func initPrometheusMetrics() *prometheusMetrics {
 				Help:      "YCSB operation latency in milliseconds.",
 				Buckets:   prometheusLatencyBuckets,
 			},
-			[]string{"operation", "result"},
+			[]string{"table", "operation", "result"},
 		),
 	}
 	registry := prometheus.NewRegistry()
@@ -69,14 +69,14 @@ func initPrometheusMetrics() *prometheusMetrics {
 	return collectors
 }
 
-func (m *prometheusMetrics) observe(op string, latency time.Duration) {
+func (m *prometheusMetrics) observe(table, op string, latency time.Duration) {
 	result := "ok"
 	if strings.HasSuffix(op, "_ERROR") {
 		result = "error"
 		op = strings.TrimSuffix(op, "_ERROR")
 	}
-	m.operations.WithLabelValues(op, result).Inc()
-	m.duration.WithLabelValues(op, result).Observe(float64(latency) / float64(time.Millisecond))
+	m.operations.WithLabelValues(table, op, result).Inc()
+	m.duration.WithLabelValues(table, op, result).Observe(float64(latency) / float64(time.Millisecond))
 }
 
 // MetricsHandler returns the Prometheus exposition handler for this process.

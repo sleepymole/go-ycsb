@@ -445,7 +445,7 @@ func (c *core) doTransactionReadModifyWrite(ctx context.Context, db ycsb.DB, sta
 		if err != nil {
 			op += "_ERROR"
 		}
-		measurement.Measure(op, start, time.Since(start))
+		measurement.MeasureWithTable(c.table, op, start, time.Since(start))
 	}()
 
 	keyNum := c.nextKeyNum(state)

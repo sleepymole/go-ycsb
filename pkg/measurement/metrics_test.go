@@ -29,8 +29,10 @@ func TestMetricsHandler(t *testing.T) {
 	p := properties.NewProperties()
 	p.Set(prop.MetricsAddr, "127.0.0.1:0")
 	InitMeasure(p)
-	Measure("READ", time.Now(), 100*time.Microsecond)
-	Measure("READ_ERROR", time.Now(), 200*time.Microsecond)
+	MeasureWithTable("table-a", "READ", time.Now(), 100*time.Microsecond)
+	MeasureWithTable("table-a", "READ_ERROR", time.Now(), 200*time.Microsecond)
+	MeasureWithTable("table-b", "READ", time.Now(), 300*time.Microsecond)
+	Measure("SCAN", time.Now(), 400*time.Microsecond)
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	resp := httptest.NewRecorder()
@@ -41,12 +43,15 @@ func TestMetricsHandler(t *testing.T) {
 	}
 	body := resp.Body.String()
 	for _, metric := range []string{
-		`go_ycsb_operations_total{operation="READ",result="ok"} 1`,
-		`go_ycsb_operations_total{operation="READ",result="error"} 1`,
-		`go_ycsb_operation_duration_millis_count{operation="READ",result="ok"} 1`,
-		`go_ycsb_operation_duration_millis_sum{operation="READ",result="ok"} 0.1`,
-		`go_ycsb_operation_duration_millis_count{operation="READ",result="error"} 1`,
-		`go_ycsb_operation_duration_millis_sum{operation="READ",result="error"} 0.2`,
+		`go_ycsb_operations_total{operation="READ",result="ok",table="table-a"} 1`,
+		`go_ycsb_operations_total{operation="READ",result="error",table="table-a"} 1`,
+		`go_ycsb_operation_duration_millis_count{operation="READ",result="ok",table="table-a"} 1`,
+		`go_ycsb_operation_duration_millis_sum{operation="READ",result="ok",table="table-a"} 0.1`,
+		`go_ycsb_operation_duration_millis_count{operation="READ",result="error",table="table-a"} 1`,
+		`go_ycsb_operation_duration_millis_sum{operation="READ",result="error",table="table-a"} 0.2`,
+		`go_ycsb_operations_total{operation="READ",result="ok",table="table-b"} 1`,
+		`go_ycsb_operation_duration_millis_sum{operation="READ",result="ok",table="table-b"} 0.3`,
+		`go_ycsb_operations_total{operation="SCAN",result="ok",table="usertable"} 1`,
 	} {
 		if !strings.Contains(body, metric) {
 			t.Errorf("metrics output does not contain %q:\n%s", metric, body)

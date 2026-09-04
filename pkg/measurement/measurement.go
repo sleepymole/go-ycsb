@@ -43,7 +43,7 @@ type intervalSummarizer interface {
 	IntervalSummary()
 }
 
-func (m *measurement) measure(op string, start time.Time, lan time.Duration) {
+func (m *measurement) measure(table, op string, start time.Time, lan time.Duration) {
 	m.Lock()
 	m.measurer.Measure(op, start, lan)
 	m.Unlock()
@@ -52,7 +52,7 @@ func (m *measurement) measure(op string, start time.Time, lan time.Duration) {
 	// measurer lock so enabling metrics does not extend the global critical
 	// section shared by all benchmark workers.
 	if m.prometheus != nil {
-		m.prometheus.observe(op, lan)
+		m.prometheus.observe(table, op, lan)
 	}
 }
 
@@ -144,8 +144,15 @@ func IsWarmUpFinished() bool {
 
 // Measure measures the operation.
 func Measure(op string, start time.Time, lan time.Duration) {
+	table := globalMeasure.p.GetString(prop.TableName, prop.TableNameDefault)
+	MeasureWithTable(table, op, start, lan)
+}
+
+// MeasureWithTable measures the operation and associates its Prometheus
+// metrics with the table used by the request.
+func MeasureWithTable(table, op string, start time.Time, lan time.Duration) {
 	if IsWarmUpFinished() {
-		globalMeasure.measure(op, start, lan)
+		globalMeasure.measure(table, op, start, lan)
 	}
 }
 

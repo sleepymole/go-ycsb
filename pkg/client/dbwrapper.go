@@ -29,15 +29,15 @@ type DbWrapper struct {
 
 var _ ycsb.ReadModifyWriteDB = DbWrapper{}
 
-func measure(start time.Time, op string, err error) {
+func measure(start time.Time, table, op string, err error) {
 	lan := time.Since(start)
 	if err != nil {
-		measurement.Measure(fmt.Sprintf("%s_ERROR", op), start, lan)
+		measurement.MeasureWithTable(table, fmt.Sprintf("%s_ERROR", op), start, lan)
 		return
 	}
 
-	measurement.Measure(op, start, lan)
-	measurement.Measure("TOTAL", start, lan)
+	measurement.MeasureWithTable(table, op, start, lan)
+	measurement.MeasureWithTable(table, "TOTAL", start, lan)
 }
 
 func (db DbWrapper) Close() error {
@@ -55,7 +55,7 @@ func (db DbWrapper) CleanupThread(ctx context.Context) {
 func (db DbWrapper) Read(ctx context.Context, table string, key string, fields []string) (_ map[string][]byte, err error) {
 	start := time.Now()
 	defer func() {
-		measure(start, "READ", err)
+		measure(start, table, "READ", err)
 	}()
 
 	return db.DB.Read(ctx, table, key, fields)
@@ -67,7 +67,7 @@ func (db DbWrapper) Read(ctx context.Context, table string, key string, fields [
 func (db DbWrapper) ReadForUpdate(ctx context.Context, table string, key string, fields []string) (_ map[string][]byte, _ []byte, err error) {
 	start := time.Now()
 	defer func() {
-		measure(start, "READ", err)
+		measure(start, table, "READ", err)
 	}()
 
 	if rmwDB, ok := db.DB.(ycsb.ReadModifyWriteDB); ok {
@@ -82,7 +82,7 @@ func (db DbWrapper) BatchRead(ctx context.Context, table string, keys []string, 
 	if ok {
 		start := time.Now()
 		defer func() {
-			measure(start, "BATCH_READ", err)
+			measure(start, table, "BATCH_READ", err)
 		}()
 		return batchDB.BatchRead(ctx, table, keys, fields)
 	}
@@ -98,7 +98,7 @@ func (db DbWrapper) BatchRead(ctx context.Context, table string, keys []string, 
 func (db DbWrapper) Scan(ctx context.Context, table string, startKey string, count int, fields []string) (_ []map[string][]byte, err error) {
 	start := time.Now()
 	defer func() {
-		measure(start, "SCAN", err)
+		measure(start, table, "SCAN", err)
 	}()
 
 	return db.DB.Scan(ctx, table, startKey, count, fields)
@@ -107,7 +107,7 @@ func (db DbWrapper) Scan(ctx context.Context, table string, startKey string, cou
 func (db DbWrapper) Update(ctx context.Context, table string, key string, values map[string][]byte) (err error) {
 	start := time.Now()
 	defer func() {
-		measure(start, "UPDATE", err)
+		measure(start, table, "UPDATE", err)
 	}()
 
 	return db.DB.Update(ctx, table, key, values)
@@ -119,7 +119,7 @@ func (db DbWrapper) Update(ctx context.Context, table string, key string, values
 func (db DbWrapper) UpdateWithRead(ctx context.Context, table string, key string, readValues map[string][]byte, readValue []byte, values map[string][]byte) (err error) {
 	start := time.Now()
 	defer func() {
-		measure(start, "UPDATE", err)
+		measure(start, table, "UPDATE", err)
 	}()
 
 	if rmwDB, ok := db.DB.(ycsb.ReadModifyWriteDB); ok {
@@ -133,7 +133,7 @@ func (db DbWrapper) BatchUpdate(ctx context.Context, table string, keys []string
 	if ok {
 		start := time.Now()
 		defer func() {
-			measure(start, "BATCH_UPDATE", err)
+			measure(start, table, "BATCH_UPDATE", err)
 		}()
 		return batchDB.BatchUpdate(ctx, table, keys, values)
 	}
@@ -149,7 +149,7 @@ func (db DbWrapper) BatchUpdate(ctx context.Context, table string, keys []string
 func (db DbWrapper) Insert(ctx context.Context, table string, key string, values map[string][]byte) (err error) {
 	start := time.Now()
 	defer func() {
-		measure(start, "INSERT", err)
+		measure(start, table, "INSERT", err)
 	}()
 
 	return db.DB.Insert(ctx, table, key, values)
@@ -160,7 +160,7 @@ func (db DbWrapper) BatchInsert(ctx context.Context, table string, keys []string
 	if ok {
 		start := time.Now()
 		defer func() {
-			measure(start, "BATCH_INSERT", err)
+			measure(start, table, "BATCH_INSERT", err)
 		}()
 		return batchDB.BatchInsert(ctx, table, keys, values)
 	}
@@ -176,7 +176,7 @@ func (db DbWrapper) BatchInsert(ctx context.Context, table string, keys []string
 func (db DbWrapper) Delete(ctx context.Context, table string, key string) (err error) {
 	start := time.Now()
 	defer func() {
-		measure(start, "DELETE", err)
+		measure(start, table, "DELETE", err)
 	}()
 
 	return db.DB.Delete(ctx, table, key)
@@ -187,7 +187,7 @@ func (db DbWrapper) BatchDelete(ctx context.Context, table string, keys []string
 	if ok {
 		start := time.Now()
 		defer func() {
-			measure(start, "BATCH_DELETE", err)
+			measure(start, table, "BATCH_DELETE", err)
 		}()
 		return batchDB.BatchDelete(ctx, table, keys)
 	}

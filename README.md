@@ -133,9 +133,9 @@ tasks concurrently. It reports `crc64_xor`, `total_kvs`, and `total_bytes`.
 
 When `metrics.addr` is set, go-ycsb exposes the process measurements at
 `/metrics`. The endpoint contains `go_ycsb_operations_total` and
-`go_ycsb_operation_duration_millis`, labeled by operation and result (`ok` or
-`error`). Each go-ycsb process must use a different address when running more
-than one process.
+`go_ycsb_operation_duration_millis`, labeled by table, operation, and result
+(`ok` or `error`). Each go-ycsb process must use a different address when
+running more than one process.
 
 The periodic summary printed by `measurement.interval` (or `--interval`) is
 for the elapsed window since the previous summary. The final report printed

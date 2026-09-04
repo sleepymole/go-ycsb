@@ -151,7 +151,7 @@ func TestReadModifyWriteMetricsResult(t *testing.T) {
 			req := httptest.NewRequest("GET", "/metrics", nil)
 			resp := httptest.NewRecorder()
 			measurement.MetricsHandler().ServeHTTP(resp, req)
-			metric := `go_ycsb_operations_total{operation="READ_MODIFY_WRITE",result="` + tt.wantResult + `"} 1`
+			metric := `go_ycsb_operations_total{operation="READ_MODIFY_WRITE",result="` + tt.wantResult + `",table="usertable"} 1`
 			if !strings.Contains(resp.Body.String(), metric) {
 				t.Fatalf("metrics output does not contain %q:\n%s", metric, resp.Body.String())
 			}
